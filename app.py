@@ -1,94 +1,53 @@
 from flask import Flask, request, jsonify, send_from_directory
+import os
 import http.client
 import json
-import os
 
-app = Flask(__name__, static_folder="static")
+app = Flask(__name__, static_folder='static')
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# 🔹 Serve frontend (index.html)
+@app.route('/')
+def home():
+    return send_from_directory('static', 'index.html')
 
-def call_claude(prompt):
-    payload = json.dumps({
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": 1500,
-        "messages": [{"role": "user", "content": prompt}]
-    })
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01"
-    }
+
+# 🔹 Example API route (resume analysis)
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    data = request.get_json()
+    resume_text = data.get("resume", "")
+    job_desc = data.get("job_description", "")
+
+    # 🔐 API key from environment
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
     conn = http.client.HTTPSConnection("api.anthropic.com")
+
+    payload = json.dumps({
+        "model": "claude-3-sonnet-20240229",
+        "max_tokens": 800,
+        "messages": [
+            {
+                "role": "user",
+                "content": f"Analyze this resume:\n{resume_text}\n\nJob Description:\n{job_desc}"
+            }
+        ]
+    })
+
+    headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': api_key,
+        'anthropic-version': '2023-06-01'
+    }
+
     conn.request("POST", "/v1/messages", payload, headers)
     res = conn.getresponse()
-    data = json.loads(res.read().decode("utf-8"))
-    conn.close()
-    if "error" in data:
-        raise Exception(data["error"].get("message", "API error"))
-    return "".join(b.get("text","") for b in data.get("content",[]))
+    response_data = res.read()
 
-@app.route("/")
-def index():
-    return send_from_directory("static", "index.html")
+    return jsonify(json.loads(response_data))
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
-    body = request.get_json(force=True)
-    resume = (body.get("resume") or "").strip()
-    job    = (body.get("job") or "").strip()
 
-    if not resume:
-        return jsonify({"error": "Resume text is required"}), 400
-
-    prompt = f"""You are a senior career coach and ATS expert. Analyze the resume below{' against the provided job description' if job else ''}.
-Respond ONLY with a valid JSON object — no markdown fences, no extra text.
-
-Resume:
-{resume[:3500]}
-{"Job Description:" + chr(10) + job[:1500] if job else ""}
-
-Return exactly this JSON structure:
-{{
-  "overallScore": <integer 0-100>,
-  "atsScore": <integer 0-100>,
-  "roleTitle": "<detected role, max 5 words>",
-  "experienceLevel": "<e.g. Senior · ~7 yrs>",
-  "verdict": "<strong | moderate | weak>",
-  "verdictLabel": "<e.g. Strong Candidate>",
-  "sections": [
-    {{"name": "Contact Info",  "score": <0-100>, "note": "<one short tip>"}},
-    {{"name": "Work History",  "score": <0-100>, "note": "<one short tip>"}},
-    {{"name": "Skills",        "score": <0-100>, "note": "<one short tip>"}},
-    {{"name": "Education",     "score": <0-100>, "note": "<one short tip>"}},
-    {{"name": "Achievements",  "score": <0-100>, "note": "<one short tip>"}},
-    {{"name": "Formatting",    "score": <0-100>, "note": "<one short tip>"}}
-  ],
-  "skillsFound": ["skill1","skill2","skill3","skill4","skill5","skill6","skill7","skill8"],
-  "skillsGap": ["missing1","missing2","missing3","missing4"],
-  "keywords": {{"matched": ["kw1","kw2","kw3"], "missing": ["kw4","kw5"]}},
-  "summary": "<3 sentences: strengths, weaknesses, overall impression>",
-  "topStrength": "<single best thing about this resume>",
-  "suggestions": [
-    "<specific improvement 1>",
-    "<specific improvement 2>",
-    "<specific improvement 3>",
-    "<specific improvement 4>",
-    "<specific improvement 5>"
-  ]
-}}"""
-
-    try:
-        raw = call_claude(prompt)
-        raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        result = json.loads(raw)
-        return jsonify(result)
-    except json.JSONDecodeError as e:
-        return jsonify({"error": f"Could not parse AI response: {e}"}), 500
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+# 🔹 Run app (Render compatible)
 if __name__ == "__main__":
-    import os
-
-port = int(os.environ.get("PORT", 10000))
-app.run(host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
